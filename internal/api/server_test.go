@@ -84,6 +84,76 @@ func TestHealthz(t *testing.T) {
 	})
 }
 
+func TestServerStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("MANAGEMENT_PASSWORD", "management-key")
+
+	tmpDir := t.TempDir()
+	authDir := filepath.Join(tmpDir, "auth")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatalf("failed to create auth dir: %v", err)
+	}
+
+	cfg := &proxyconfig.Config{
+		SDKConfig: sdkconfig.SDKConfig{
+			APIKeys: []string{"test-key"},
+		},
+		Port:                   0,
+		AuthDir:                authDir,
+		Debug:                  true,
+		LoggingToFile:          false,
+		UsageStatisticsEnabled: false,
+	}
+	server := NewServer(
+		cfg,
+		auth.NewManager(nil, nil, nil),
+		sdkaccess.NewManager(),
+		filepath.Join(tmpDir, "config.yaml"),
+		WithLocalManagementPassword("management-key"),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/server-status", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d; body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp struct {
+		CPU struct {
+			Cores int `json:"cores"`
+		} `json:"cpu"`
+		Memory struct {
+			TotalBytes *uint64 `json:"total_bytes"`
+		} `json:"memory"`
+		Process struct {
+			Goroutines int `json:"goroutines"`
+		} `json:"process"`
+		UptimeSeconds int64  `json:"uptime_seconds"`
+		UpdatedAt     string `json:"updated_at"`
+		OS            string `json:"os"`
+		Arch          string `json:"arch"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response JSON: %v; body=%s", err, rr.Body.String())
+	}
+	if resp.CPU.Cores <= 0 {
+		t.Fatalf("expected positive cpu cores, got %d", resp.CPU.Cores)
+	}
+	if resp.Process.Goroutines <= 0 {
+		t.Fatalf("expected positive goroutine count, got %d", resp.Process.Goroutines)
+	}
+	if resp.UpdatedAt == "" {
+		t.Fatalf("expected updated_at to be present")
+	}
+	if resp.OS == "" || resp.Arch == "" {
+		t.Fatalf("expected os and arch to be present, got os=%q arch=%q", resp.OS, resp.Arch)
+	}
+}
+
 func TestAmpProviderModelRoutes(t *testing.T) {
 	testCases := []struct {
 		name         string
