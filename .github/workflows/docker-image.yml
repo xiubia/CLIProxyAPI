@@ -10,8 +10,28 @@ env:
   DOCKERHUB_REPO: eceasy/cli-proxy-api
 
 jobs:
+  docker_preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      publish_docker: ${{ steps.check.outputs.publish_docker }}
+    steps:
+      - name: Check DockerHub credentials
+        id: check
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "publish_docker=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish_docker=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Skipping Docker image publish because DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not configured."
+          fi
+
   docker_amd64:
     runs-on: ubuntu-latest
+    needs: docker_preflight
+    if: needs.docker_preflight.outputs.publish_docker == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,6 +67,8 @@ jobs:
 
   docker_arm64:
     runs-on: ubuntu-24.04-arm
+    needs: docker_preflight
+    if: needs.docker_preflight.outputs.publish_docker == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,8 +105,10 @@ jobs:
   docker_manifest:
     runs-on: ubuntu-latest
     needs:
+      - docker_preflight
       - docker_amd64
       - docker_arm64
+    if: needs.docker_preflight.outputs.publish_docker == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
